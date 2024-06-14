@@ -24,7 +24,7 @@ def warm_up_pipeline():
     """
 
     hf_token = os.environ.get("HF_TOKEN", None)
-    fetch_pretrained_model("stabilityai/stable-diffusion-3-medium-diffusers", hf_token)
+    fetch_pretrained_model("google/paligemma-3b-mix-448", hf_token)
 
 
 if __name__ == "__main__":
