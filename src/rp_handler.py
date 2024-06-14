@@ -73,7 +73,10 @@ def handler(job):
         generation = generation[0][input_len:]
         decoded = MODELS.processor.decode(generation, skip_special_tokens=True)
 
-    return {"output": decoded}
+    return {
+        "output": decoded,
+        "refresh_worker": True
+    }
 
 
 runpod.serverless.start({"handler": handler})
