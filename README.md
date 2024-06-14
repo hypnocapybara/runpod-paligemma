@@ -1,11 +1,22 @@
 <div align="center">
 
-<h1>Stable Diffusion 3 | Worker</h1>
+<h1>Google Paligemma | Worker</h1>
 
-🚀 | RunPod implementation of SD3-medium for serverless deployment.
+🚀 | RunPod implementation of Google Paligemma for serverless deployment.
 </div>
 
 ## 📖 | Getting Started
+
+### Params:
+Input example:
+```json
+{
+  "input": {
+    "prompt": "What is the brand and model of the car in the image?",
+    "image_url": "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/car.jpg"
+  }
+}
+```
 
 ### To make updates:
 
