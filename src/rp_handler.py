@@ -30,6 +30,7 @@ class ModelHandler:
             torch_dtype=torch.bfloat16,
             device_map="cuda:0",
             revision="bfloat16",
+            local_files_only=True
         ).eval()
 
         processor = AutoProcessor.from_pretrained(model_id, local_files_only=True)
