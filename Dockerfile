@@ -1,5 +1,5 @@
 # Base image
-FROM runpod/base:0.4.2-cuda11.8.0
+FROM runpod/base:0.6.2-cuda12.1.0
 
 ENV HF_HUB_ENABLE_HF_TRANSFER=0
 
@@ -11,7 +11,8 @@ RUN python3.11 -m pip install --upgrade pip && \
 
 # Cache Models
 COPY builder/cache_models.py /cache_models.py
-RUN python3.11 /cache_models.py && \
+RUN --mount=type=secret,id=HF_TOKEN \
+ HF_TOKEN=$(cat /run/secrets/HF_TOKEN) python3.11 /cache_models.py && \
     rm /cache_models.py
 
 # Add src files (Worker Template)

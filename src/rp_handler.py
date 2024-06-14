@@ -1,25 +1,13 @@
-'''
+"""
 Contains the handler function that will be called by the serverless.
-'''
-
-import os
-import base64
+"""
+import torch
+import runpod
 import concurrent.futures
 
-import torch
-from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline, AutoencoderKL
+from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
 from diffusers.utils import load_image
 
-from diffusers import (
-    PNDMScheduler,
-    LMSDiscreteScheduler,
-    DDIMScheduler,
-    EulerDiscreteScheduler,
-    DPMSolverMultistepScheduler,
-)
-
-import runpod
-from runpod.serverless.utils import rp_upload, rp_cleanup
 from runpod.serverless.utils.rp_validator import validate
 
 from rp_schemas import INPUT_SCHEMA
@@ -31,39 +19,28 @@ torch.cuda.empty_cache()
 
 class ModelHandler:
     def __init__(self):
-        self.base = None
-        self.refiner = None
+        self.model = None
+        self.processor = None
         self.load_models()
 
-    def load_base(self):
-        vae = AutoencoderKL.from_pretrained(
-            "madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16)
-        base_pipe = StableDiffusionXLPipeline.from_pretrained(
-            "Corcelio/mobius", vae=vae,
-            torch_dtype=torch.float16, variant="fp16", use_safetensors=True, add_watermarker=False
-        )
-        base_pipe = base_pipe.to("cuda", silence_dtype_warnings=True)
-        base_pipe.enable_xformers_memory_efficient_attention()
-        return base_pipe
+    def _do_load_model(self):
+        model_id = "google/paligemma-3b-mix-448"
+        model = PaliGemmaForConditionalGeneration.from_pretrained(
+            model_id,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda:0",
+            revision="bfloat16",
+        ).eval()
 
-    def load_refiner(self):
-        vae = AutoencoderKL.from_pretrained(
-            "madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16)
-        refiner_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-            "stabilityai/stable-diffusion-xl-refiner-1.0", vae=vae,
-            torch_dtype=torch.float16, variant="fp16", use_safetensors=True, add_watermarker=False
-        )
-        refiner_pipe = refiner_pipe.to("cuda", silence_dtype_warnings=True)
-        refiner_pipe.enable_xformers_memory_efficient_attention()
-        return refiner_pipe
+        processor = AutoProcessor.from_pretrained(model_id, local_files_only=True)
+
+        return model, processor
 
     def load_models(self):
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_base = executor.submit(self.load_base)
-            future_refiner = executor.submit(self.load_refiner)
+            future_model = executor.submit(self._do_load_model)
 
-            self.base = future_base.result()
-            self.refiner = future_refiner.result()
+            self.model, self.processor = future_model.result()
 
 
 MODELS = ModelHandler()
@@ -71,41 +48,8 @@ MODELS = ModelHandler()
 # ---------------------------------- Helper ---------------------------------- #
 
 
-def _save_and_upload_images(images, job_id):
-    os.makedirs(f"/{job_id}", exist_ok=True)
-    image_urls = []
-    for index, image in enumerate(images):
-        image_path = os.path.join(f"/{job_id}", f"{index}.png")
-        image.save(image_path)
-
-        if os.environ.get('BUCKET_ENDPOINT_URL', False):
-            image_url = rp_upload.upload_image(job_id, image_path)
-            image_urls.append(image_url)
-        else:
-            with open(image_path, "rb") as image_file:
-                image_data = base64.b64encode(
-                    image_file.read()).decode("utf-8")
-                image_urls.append(f"data:image/png;base64,{image_data}")
-
-    rp_cleanup.clean([f"/{job_id}"])
-    return image_urls
-
-
-def make_scheduler(name, config):
-    return {
-        "PNDM": PNDMScheduler.from_config(config),
-        "KLMS": LMSDiscreteScheduler.from_config(config),
-        "DDIM": DDIMScheduler.from_config(config),
-        "K_EULER": EulerDiscreteScheduler.from_config(config),
-        "DPMSolverMultistep": DPMSolverMultistepScheduler.from_config(config),
-    }[name]
-
-
 @torch.inference_mode()
-def generate_image(job):
-    '''
-    Generate an image from text using your Model
-    '''
+def handler(job):
     job_input = job["input"]
 
     # Input validation
@@ -113,75 +57,23 @@ def generate_image(job):
 
     if 'errors' in validated_input:
         return {"error": validated_input['errors']}
+
     job_input = validated_input['validated_input']
 
-    starting_image = job_input['image_url']
-    should_run_refiner = job_input['run_refiner']
+    prompt = job_input["prompt"]
+    max_new_tokens = job_input["max_new_tokens"]
+    image_url = job_input["image_url"]
 
-    if job_input['seed'] is None:
-        job_input['seed'] = int.from_bytes(os.urandom(2), "big")
+    init_image = load_image(image_url).convert("RGB")
+    model_inputs = MODELS.processor(text=prompt, images=init_image, return_tensors="pt").to(MODELS.model.device)
+    input_len = model_inputs["input_ids"].shape[-1]
 
-    generator = torch.Generator("cuda").manual_seed(job_input['seed'])
+    with torch.inference_mode():
+        generation = MODELS.model.generate(**model_inputs, max_new_tokens=max_new_tokens, do_sample=False)
+        generation = generation[0][input_len:]
+        decoded = MODELS.processor.decode(generation, skip_special_tokens=True)
 
-    MODELS.base.scheduler = make_scheduler(
-        job_input['scheduler'], MODELS.base.scheduler.config)
-
-    if starting_image:  # If image_url is provided, run only the refiner pipeline
-        init_image = load_image(starting_image).convert("RGB")
-        output = MODELS.refiner(
-            prompt=job_input['prompt'],
-            num_inference_steps=job_input['refiner_inference_steps'],
-            strength=job_input['strength'],
-            image=init_image,
-            generator=generator
-        ).images
-    else:
-        # Generate latent image using pipe
-        output_type = "latent" if should_run_refiner else "pil"
-        image = MODELS.base(
-            prompt=job_input['prompt'],
-            negative_prompt=job_input['negative_prompt'],
-            height=job_input['height'],
-            width=job_input['width'],
-            num_inference_steps=job_input['num_inference_steps'],
-            guidance_scale=job_input['guidance_scale'],
-            denoising_end=job_input['high_noise_frac'],
-            output_type=output_type,
-            num_images_per_prompt=job_input['num_images'],
-            clip_skip=job_input['clip_skip'],
-            generator=generator
-        ).images
-
-        if should_run_refiner:
-            try:
-                output = MODELS.refiner(
-                    prompt=job_input['prompt'],
-                    num_inference_steps=job_input['refiner_inference_steps'],
-                    strength=job_input['strength'],
-                    image=image,
-                    num_images_per_prompt=job_input['num_images'],
-                    generator=generator
-                ).images
-            except RuntimeError as err:
-                return {
-                    "error": f"RuntimeError: {err}, Stack Trace: {err.__traceback__}",
-                    "refresh_worker": True
-                }
-        else:
-            output = image
-
-    image_urls = _save_and_upload_images(output, job['id'])
-
-    results = {
-        "images": image_urls,
-        "image_url": image_urls[0],
-        "seed": job_input['seed']
-    }
-
-    if starting_image:
-        results['refresh_worker'] = True
-
-    return results
+    return {"output": decoded}
 
 
-runpod.serverless.start({"handler": generate_image})
+runpod.serverless.start({"handler": handler})
