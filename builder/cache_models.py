@@ -1,7 +1,5 @@
 import os
-
-import torch
-from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
+from huggingface_hub import snapshot_download
 
 
 def fetch_pretrained_model(model_name, hf_token=None):
@@ -9,17 +7,9 @@ def fetch_pretrained_model(model_name, hf_token=None):
     Fetches a pretrained model from the HuggingFace model hub.
     """
     max_retries = 3
-
     for attempt in range(max_retries):
         try:
-            PaliGemmaForConditionalGeneration.from_pretrained(
-                model_name,
-                torch_dtype=torch.bfloat16,
-                revision="bfloat16",
-                token=hf_token,
-            ).eval()
-
-            AutoProcessor.from_pretrained(model_name, token=hf_token)
+            return snapshot_download(repo_id=model_name, repo_type="model", token=hf_token)
         except OSError as err:
             if attempt < max_retries - 1:
                 print(
