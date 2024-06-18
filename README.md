@@ -24,7 +24,7 @@ Input example:
 2. Obtain access to the Paligemma model on Huggingface
 3. Build a container using token in the command: `HF_TOKEN=<YOUR_TOKEN> docker build --secret id=HF_TOKEN .`
 4. Push it to your DockerHub account
-5. Create a new serverless endpoint on RunPod with the image you just pushed.
+5. Create a new serverless endpoint on RunPod with the image you just pushed and specify `HF_TOKEN` env variable
 
 ## 🔗 | Links
 - 🐳 [Docker Container](https://hub.docker.com/r/runpod/ai-api-sdxl)
