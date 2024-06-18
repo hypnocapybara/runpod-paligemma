@@ -27,5 +27,5 @@ Input example:
 5. Create a new serverless endpoint on RunPod with the image you just pushed and specify `HF_TOKEN` env variable
 
 ## 🔗 | Links
-- 🐳 [Docker Container](https://hub.docker.com/r/runpod/ai-api-sdxl)
+- 🐳 [Docker Container](https://hub.docker.com/r/hypnocapybara/runpod-paligemma)
 - [RunPod workers repo](https://github.com/runpod-workers)
